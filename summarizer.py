@@ -13,7 +13,40 @@ client = genai.Client(
 )
 
 
+def summarize_email(email):
+    prompt = f"""
+Summarize the following email clearly and concisely.
+
+From: {email['from']}
+Subject: {email['subject']}
+Date: {email['date']}
+
+Email:
+{email['body']}
+
+Return:
+1. A one-line summary
+2. The key points
+3. Any action required from me
+4. Any important deadline or date
+
+Do not invent information that is not present in the email.
+"""
+
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt,
+    )
+
+    return response.text
+
+
 def summarize_emails(emails):
+    """
+    Existing batch summarization function.
+    Kept for compatibility.
+    """
+
     prompt = "Summarize these emails into a concise daily digest.\n\n"
 
     for i, email in enumerate(emails, 1):
@@ -21,6 +54,7 @@ def summarize_emails(emails):
 Email {i}
 From: {email['from']}
 Subject: {email['subject']}
+Date: {email['date']}
 
 Body:
 {email['body']}
