@@ -1,0 +1,32 @@
+{
+  "gmail.py": {
+    "mtime": 1789736446.0730865,
+    "ast_hash": "601303d66468c23f8fab708f23361a79",
+    "semantic_hash": "601303d66468c23f8fab708f23361a79"
+  },
+  "server.py": {
+    "mtime": 1789737461.3397107,
+    "ast_hash": "2b43461117c5edd88e1450990f497f97",
+    "semantic_hash": "2b43461117c5edd88e1450990f497f97"
+  },
+  "state.py": {
+    "mtime": 1789737457.5049732,
+    "ast_hash": "296d6cfae796e3ee9f1eff03c21a02b2",
+    "semantic_hash": "296d6cfae796e3ee9f1eff03c21a02b2"
+  },
+  "summarizer.py": {
+    "mtime": 1789736471.1269548,
+    "ast_hash": "0899fce1cacd5626568eca65098fe9d9",
+    "semantic_hash": "0899fce1cacd5626568eca65098fe9d9"
+  },
+  "README.md": {
+    "mtime": 1789732744.7546952,
+    "ast_hash": "a4bbecfdbc39af678a942aef56e88525",
+    "semantic_hash": "a4bbecfdbc39af678a942aef56e88525"
+  },
+  "requirements.txt": {
+    "mtime": 1789736474.8704126,
+    "ast_hash": "34416aa98e5c874374790ff690d9fb25",
+    "semantic_hash": "34416aa98e5c874374790ff690d9fb25"
+  }
+}
