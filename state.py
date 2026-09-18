@@ -5,6 +5,10 @@ from datetime import datetime, timezone
 
 STATE_DB = os.getenv("STATE_DB", "state.db")
 
+# ponytail: keyed on IMAP uid alone, which is only unique within the mailbox's
+# current UIDVALIDITY epoch. Fine for a single Gmail account where UIDVALIDITY
+# essentially never changes; if it ever does, key on (uidvalidity, uid) instead.
+
 
 @contextmanager
 def _connect():

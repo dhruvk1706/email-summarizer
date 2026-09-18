@@ -17,6 +17,9 @@ from summarizer import summarize_email
 from state import is_delivered, mark_delivered
 
 app = Flask(__name__)
+# ponytail: in-process lock only guards a single Gunicorn worker. Fine while
+# the Dockerfile runs gunicorn with no --workers flag (defaults to 1); if
+# workers are ever added, switch to a file lock or DB-based lock instead.
 poll_lock = threading.Lock()
 
 def send_telegram_message(text):
