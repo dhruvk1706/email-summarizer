@@ -1,7 +1,4 @@
 python-telegram-bot
 python-dotenv
-google-api-python-client
-google-auth-httplib2
-google-auth-oauthlib
 Flask
 google-genai

@@ -3,5 +3,4 @@ service-account.json
 __pycache__/
 *.pyc
 venv/
-CLAUDE.md
-baseline_established
+.git/

@@ -1,158 +1,132 @@
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
-import base64
+import email
+import imaplib
 import os
+from email.header import decode_header
+
+IMAP_HOST = "imap.gmail.com"
 
 
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+def _decode(value):
+    if not value:
+        return ""
 
+    parts = decode_header(value)
+    decoded = ""
 
-def get_gmail_service():
-    creds = None
-
-    if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file(
-            "token.json",
-            SCOPES
-        )
-
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+    for text, charset in parts:
+        if isinstance(text, bytes):
+            decoded += text.decode(charset or "utf-8", errors="ignore")
         else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                "credentials.json",
-                SCOPES
-            )
-            creds = flow.run_local_server(port=0)
+            decoded += text
 
-        with open("token.json", "w") as token:
-            token.write(creds.to_json())
-
-    return build("gmail", "v1", credentials=creds)
+    return decoded
 
 
-def _decode_body(data):
-    if not data:
+def _extract_body(msg):
+    if msg.is_multipart():
+        for part in msg.walk():
+            if part.get_content_type() == "text/plain":
+                payload = part.get_payload(decode=True)
+
+                if payload:
+                    return payload.decode(
+                        part.get_content_charset() or "utf-8",
+                        errors="ignore"
+                    ).strip()
+
         return ""
 
-    try:
-        return base64.urlsafe_b64decode(data).decode(
-            "utf-8",
-            errors="ignore"
-        )
-    except Exception:
+    payload = msg.get_payload(decode=True)
+
+    if not payload:
         return ""
 
-
-def _extract_body(payload):
-    """
-    Extract the plain-text body from a Gmail message.
-    Handles both simple and multipart messages.
-    """
-
-    mime_type = payload.get("mimeType", "")
-
-    if mime_type == "text/plain":
-        return _decode_body(payload.get("body", {}).get("data"))
-
-    for part in payload.get("parts", []):
-        body = _extract_body(part)
-
-        if body:
-            return body
-
-    return ""
+    return payload.decode(
+        msg.get_content_charset() or "utf-8",
+        errors="ignore"
+    ).strip()
 
 
-def _parse_message(message):
-    payload = message.get("payload", {})
-    headers = payload.get("headers", [])
-
-    headers_dict = {
-        header["name"].lower(): header["value"]
-        for header in headers
-    }
+def _parse_message(uid, raw_bytes):
+    msg = email.message_from_bytes(raw_bytes)
 
     return {
-        "id": message.get("id"),
-        "thread_id": message.get("threadId"),
-        "from": headers_dict.get("from", ""),
-        "to": headers_dict.get("to", ""),
-        "subject": headers_dict.get("subject", ""),
-        "date": headers_dict.get("date", ""),
-        "body": _extract_body(payload).strip(),
+        "id": uid,
+        "from": _decode(msg.get("From", "")),
+        "to": _decode(msg.get("To", "")),
+        "subject": _decode(msg.get("Subject", "")),
+        "date": msg.get("Date", ""),
+        "body": _extract_body(msg),
     }
 
 
-def get_email_by_id(message_id):
+def _connect():
+    imap_user = os.environ["GMAIL_IMAP_USER"]
+    imap_password = os.environ["GMAIL_APP_PASSWORD"]
+
+    conn = imaplib.IMAP4_SSL(IMAP_HOST)
+    conn.login(imap_user, imap_password)
+    conn.select("INBOX")
+
+    return conn
+
+
+BASELINE_FILE = "baseline_established"
+
+
+def get_new_emails():
     """
-    Fetch one specific Gmail message by its message ID.
+    Fetch and return unseen INBOX emails, marking them as seen.
+    On the very first call, the existing unseen backlog is marked seen
+    without being returned, so only mail arriving after that is summarized.
     """
 
-    service = get_gmail_service()
+    conn = _connect()
 
-    message = service.users().messages().get(
-        userId="me",
-        id=message_id,
-        format="full"
-    ).execute()
+    try:
+        _, data = conn.search(None, "UNSEEN")
+        uids = data[0].split()
 
-    if "CATEGORY_PERSONAL" not in message.get("labelIds", []):
-        return None
+        first_run = not os.path.exists(BASELINE_FILE)
 
-    return _parse_message(message)
+        if first_run:
+            if uids:
+                conn.store(
+                    b",".join(uids), "+FLAGS", "\\Seen"
+                )
+            open(BASELINE_FILE, "w").close()
+            return []
+
+        emails = []
+
+        for uid in uids:
+            _, msg_data = conn.fetch(uid, "(RFC822)")
+            raw_bytes = msg_data[0][1]
+            emails.append(_parse_message(uid.decode(), raw_bytes))
+
+        return emails
+    finally:
+        conn.logout()
 
 
 def get_latest_emails(max_results=5):
     """
-    Fetch the latest emails from Gmail.
-    Kept for backwards compatibility with the current app.
+    Fetch the latest emails from Gmail (read or unread), most recent first.
     """
 
-    service = get_gmail_service()
+    conn = _connect()
 
-    results = service.users().messages().list(
-        userId="me",
-        maxResults=max_results
-    ).execute()
+    try:
+        _, data = conn.search(None, "ALL")
+        uids = data[0].split()[-max_results:]
 
-    messages = results.get("messages", [])
+        emails = []
 
-    emails = []
+        for uid in reversed(uids):
+            _, msg_data = conn.fetch(uid, "(RFC822)")
+            raw_bytes = msg_data[0][1]
+            emails.append(_parse_message(uid.decode(), raw_bytes))
 
-    for message in messages:
-        email = get_email_by_id(message["id"])
-        emails.append(email)
-
-    return emails
-
-def get_new_message_ids(start_history_id):
-    service = get_gmail_service()
-
-    response = service.users().history().list(
-        userId="me",
-        startHistoryId=start_history_id,
-        historyTypes=["messageAdded"],
-    ).execute()
-
-    message_ids = []
-
-    for history in response.get("history", []):
-        for message_added in history.get("messagesAdded", []):
-            message_ids.append(
-                message_added["message"]["id"]
-            )
-
-    return message_ids
-
-def get_current_history_id():
-    service = get_gmail_service()
-
-    profile = service.users().getProfile(
-        userId="me"
-    ).execute()
-
-    return profile["historyId"]
+        return emails
+    finally:
+        conn.logout()

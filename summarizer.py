@@ -39,31 +39,3 @@ Do not invent information that is not present in the email.
     )
 
     return response.text
-
-
-def summarize_emails(emails):
-    """
-    Existing batch summarization function.
-    Kept for compatibility.
-    """
-
-    prompt = "Summarize these emails into a concise daily digest.\n\n"
-
-    for i, email in enumerate(emails, 1):
-        prompt += f"""
-Email {i}
-From: {email['from']}
-Subject: {email['subject']}
-Date: {email['date']}
-
-Body:
-{email['body']}
-
-"""
-
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt,
-    )
-
-    return response.text
