@@ -1,4 +1,4 @@
-python-telegram-bot
-python-dotenv
-Flask
-google-genai
+python-telegram-bot==22.8
+python-dotenv==1.2.3
+Flask==3.1.3
+google-genai==2.23.0

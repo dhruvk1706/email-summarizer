@@ -1,5 +1,6 @@
 import os
 import asyncio
+import threading
 from dotenv import load_dotenv
 from telegram import Bot
 
@@ -13,8 +14,10 @@ from flask import Flask, request
 
 from gmail import get_new_emails
 from summarizer import summarize_email
+from state import is_delivered, mark_delivered
 
 app = Flask(__name__)
+poll_lock = threading.Lock()
 
 def send_telegram_message(text):
     async def send():
@@ -26,28 +29,37 @@ def send_telegram_message(text):
 
     asyncio.run(send())
 
-@app.route("/poll", methods=["POST", "GET"])
+@app.route("/poll", methods=["POST"])
 def poll():
     if request.args.get("token") != POLL_TOKEN:
         return "Forbidden", 403
 
-    emails = get_new_emails()
+    if not poll_lock.acquire(blocking=False):
+        return "Poll already in progress", 409
 
-    print(f"Found {len(emails)} new email(s).")
+    try:
+        emails = get_new_emails()
 
-    for email in emails:
-        try:
-            print(f"New email: {email['subject']}")
+        print(f"Found {len(emails)} new email(s).")
 
-            summary = summarize_email(email)
+        for email in emails:
+            try:
+                if is_delivered(email["id"]):
+                    continue
 
-            print(summary)
-            send_telegram_message(summary)
+                print(f"New email: {email['subject']}")
 
-        except Exception as e:
-            print(f"Could not process email {email['id']}: {e}")
+                summary = summarize_email(email)
+                send_telegram_message(summary)
 
-    return "OK", 200
+                mark_delivered(email["id"])
+
+            except Exception as e:
+                print(f"Could not process email {email['id']}: {e}")
+
+        return "OK", 200
+    finally:
+        poll_lock.release()
 
 
 @app.route("/", methods=["GET"])

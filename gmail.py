@@ -100,7 +100,7 @@ def get_new_emails():
         emails = []
 
         for uid in uids:
-            _, msg_data = conn.fetch(uid, "(RFC822)")
+            _, msg_data = conn.fetch(uid, "(BODY.PEEK[])")
             raw_bytes = msg_data[0][1]
             emails.append(_parse_message(uid.decode(), raw_bytes))
 
