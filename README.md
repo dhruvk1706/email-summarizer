@@ -34,6 +34,7 @@ TELEGRAM_CHAT_ID=your chat id number
 POLL_TOKEN=make up any random password here — it protects your endpoint from strangers
 GOOGLE_CLOUD_PROJECT=your google cloud project id
 GOOGLE_CLOUD_LOCATION=e.g. us-central1
+TELEGRAM_WEBHOOK_SECRET=make up another random password here — used to reply "full" (see below)
 ```
 
 Also take the JSON key file you downloaded from Google Cloud in step 3 above, rename it to `service-account.json`, and put it in this same folder.
@@ -59,6 +60,18 @@ http://localhost:8080/poll?token=<POLL_TOKEN>
 Every time you visit that link (or send a request to it), it checks your inbox for anything new and sends you a summary on Telegram. In real use, you'd point a scheduler (like a cron job or a cloud service) at this address to check automatically every so often, instead of visiting it by hand.
 
 To confirm the server is alive at all, you can visit `http://localhost:8080/` — it should just say the service is running.
+
+## Getting the full email body
+
+Each summary is sent to you on Telegram as a reply-able message. Reply to any summary with the word `full` and the bot replies back with the complete original email body.
+
+For this to work, Telegram needs to know where to send your replies — you register a "webhook" once, pointing at your server's public URL (this only works once your server is deployed somewhere reachable from the internet, e.g. Cloud Run, not `localhost`):
+
+```
+curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=https://<your-deployed-host>/telegram-webhook&secret_token=<TELEGRAM_WEBHOOK_SECRET>"
+```
+
+Use the same `TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` values from your `.env`. You only need to do this once (or again if your host URL changes).
 
 ## Heads up: the first time you run it
 
