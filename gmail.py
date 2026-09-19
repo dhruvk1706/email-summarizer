@@ -1,9 +1,17 @@
 import email
 import imaplib
 import os
+import re
 from email.header import decode_header
+from html import unescape
 
 IMAP_HOST = "imap.gmail.com"
+
+
+def _html_to_text(html):
+    text = re.sub(r"(?is)<(script|style).*?</\1>", "", html)
+    text = re.sub(r"(?s)<[^>]+>", " ", text)
+    return unescape(re.sub(r"\s+", " ", text)).strip()
 
 
 def _decode(value):
@@ -24,27 +32,45 @@ def _decode(value):
 
 def _extract_body(msg):
     if msg.is_multipart():
+        html_fallback = ""
+
         for part in msg.walk():
-            if part.get_content_type() == "text/plain":
-                payload = part.get_payload(decode=True)
+            content_type = part.get_content_type()
 
-                if payload:
-                    return payload.decode(
-                        part.get_content_charset() or "utf-8",
-                        errors="ignore"
-                    ).strip()
+            if content_type not in ("text/plain", "text/html"):
+                continue
 
-        return ""
+            payload = part.get_payload(decode=True)
+
+            if not payload:
+                continue
+
+            text = payload.decode(
+                part.get_content_charset() or "utf-8",
+                errors="ignore"
+            ).strip()
+
+            if content_type == "text/plain":
+                return text
+
+            html_fallback = html_fallback or text
+
+        return _html_to_text(html_fallback) if html_fallback else ""
 
     payload = msg.get_payload(decode=True)
 
     if not payload:
         return ""
 
-    return payload.decode(
+    text = payload.decode(
         msg.get_content_charset() or "utf-8",
         errors="ignore"
     ).strip()
+
+    if msg.get_content_type() == "text/html":
+        return _html_to_text(text)
+
+    return text
 
 
 def _parse_message(uid, raw_bytes):
@@ -84,7 +110,9 @@ def get_new_emails():
     conn = _connect()
 
     try:
-        _, data = conn.search(None, "UNSEEN")
+        _, data = conn.search(
+            None, "X-GM-RAW", '"category:primary is:unseen"'
+        )
         uids = data[0].split()
 
         first_run = not os.path.exists(BASELINE_FILE)
