@@ -42,3 +42,30 @@ Do not invent information that is not present in the email.
     )
 
     return response.text
+
+
+REPLY_COMMANDS = ["full"]
+
+
+def classify_reply_command(text):
+    """Map a free-text Telegram reply to one of REPLY_COMMANDS, or None."""
+    prompt = f"""
+The user replied to a Telegram bot with the message below, wanting to control
+how it shows them an email. Decide which single command they mean.
+
+Commands:
+- full: show the full/whole/entire original email body
+
+If the message clearly requests one of these commands, respond with just its
+name. Otherwise respond with exactly: none
+
+Message: {text!r}
+"""
+
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt,
+    )
+
+    answer = response.text.strip().lower()
+    return answer if answer in REPLY_COMMANDS else None

@@ -18,7 +18,7 @@ TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET")
 from flask import Flask, request
 
 from gmail import get_new_emails, get_email_by_uid
-from summarizer import summarize_email
+from summarizer import summarize_email, classify_reply_command
 from state import (
     is_delivered,
     mark_delivered,
@@ -68,7 +68,9 @@ def send_email_body(body, uid, reply_to_message_id):
 
 
 def handle_reply_command(text, uid, request_message_id):
-    if text.lower() == "full":
+    command = text.lower() if text.lower() in ("full",) else classify_reply_command(text)
+
+    if command == "full":
         email = get_email_by_uid(uid)
 
         if email is None:
