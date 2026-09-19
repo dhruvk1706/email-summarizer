@@ -18,6 +18,10 @@ def _connect():
             "CREATE TABLE IF NOT EXISTS delivered "
             "(uid TEXT PRIMARY KEY, delivered_at TEXT NOT NULL)"
         )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS telegram_messages "
+            "(message_id INTEGER PRIMARY KEY, uid TEXT NOT NULL)"
+        )
         yield conn
     finally:
         conn.close()
@@ -40,6 +44,23 @@ def mark_delivered(uid):
         conn.commit()
 
 
+def record_sent_message(message_id, uid):
+    with _connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO telegram_messages (message_id, uid) VALUES (?, ?)",
+            (message_id, uid),
+        )
+        conn.commit()
+
+
+def get_uid_for_message(message_id):
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT uid FROM telegram_messages WHERE message_id = ?", (message_id,)
+        ).fetchone()
+        return row[0] if row else None
+
+
 if __name__ == "__main__":
     import tempfile
 
@@ -50,5 +71,10 @@ if __name__ == "__main__":
     mark_delivered("123")
     assert is_delivered("123")
     assert not is_delivered("456")
+
+    assert get_uid_for_message(999) is None
+    record_sent_message(999, "42")
+    assert get_uid_for_message(999) == "42"
+
     os.remove(STATE_DB)
     print("ok")

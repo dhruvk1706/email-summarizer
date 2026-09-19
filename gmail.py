@@ -109,6 +109,26 @@ def get_new_emails():
         conn.logout()
 
 
+def get_email_by_uid(uid):
+    """
+    Fetch and parse a single email by IMAP uid, without changing its seen state.
+    Returns None if the uid no longer exists in the mailbox.
+    """
+
+    conn = _connect()
+
+    try:
+        _, msg_data = conn.fetch(uid.encode(), "(BODY.PEEK[])")
+
+        if not msg_data or msg_data[0] is None:
+            return None
+
+        raw_bytes = msg_data[0][1]
+        return _parse_message(uid, raw_bytes)
+    finally:
+        conn.logout()
+
+
 def get_latest_emails(max_results=5):
     """
     Fetch the latest emails from Gmail (read or unread), most recent first.
