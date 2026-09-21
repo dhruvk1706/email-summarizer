@@ -2,8 +2,11 @@ import email
 import imaplib
 import os
 import re
+from datetime import datetime, timedelta, timezone
 from email.header import decode_header
 from html import unescape
+
+from state import is_delivered, mark_delivered
 
 IMAP_HOST = "imap.gmail.com"
 
@@ -102,32 +105,34 @@ BASELINE_FILE = "baseline_established"
 
 def get_new_emails():
     """
-    Fetch and return unseen INBOX emails, marking them as seen.
-    On the very first call, the existing unseen backlog is marked seen
+    Fetch and return recent INBOX emails (last 3 days), regardless of read
+    state. Caller dedups against already-delivered uids (state.py), so
+    reading an email in Gmail directly no longer hides it from summarization.
+    On the very first call, the recent backlog is recorded as the baseline
     without being returned, so only mail arriving after that is summarized.
     """
 
     conn = _connect()
 
     try:
-        _, data = conn.search(
-            None, "X-GM-RAW", '"category:primary is:unseen"'
-        )
+        since = (datetime.now(timezone.utc) - timedelta(days=3)).strftime("%d-%b-%Y")
+        _, data = conn.search(None, "SINCE", since)
         uids = data[0].split()
 
         first_run = not os.path.exists(BASELINE_FILE)
 
         if first_run:
-            if uids:
-                conn.store(
-                    b",".join(uids), "+FLAGS", "\\Seen"
-                )
+            for uid in uids:
+                mark_delivered(uid.decode())
             open(BASELINE_FILE, "w").close()
             return []
 
         emails = []
 
         for uid in uids:
+            if is_delivered(uid.decode()):
+                continue
+
             _, msg_data = conn.fetch(uid, "(BODY.PEEK[])")
             raw_bytes = msg_data[0][1]
             emails.append(_parse_message(uid.decode(), raw_bytes))
