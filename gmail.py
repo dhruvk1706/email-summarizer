@@ -76,11 +76,11 @@ def _extract_body(msg):
     return text
 
 
-def _parse_message(uid, raw_bytes):
+def _parse_message(gmail_id, raw_bytes):
     msg = email.message_from_bytes(raw_bytes)
 
     return {
-        "id": uid,
+        "id": gmail_id,
         "from": _decode(msg.get("From", "")),
         "to": _decode(msg.get("To", "")),
         "subject": _decode(msg.get("Subject", "")),
@@ -100,13 +100,48 @@ def _connect():
     return conn
 
 
-BASELINE_FILE = "baseline_established"
+# Emails are identified everywhere by Gmail's X-GM-MSGID: permanent, and the
+# same in INBOX and All Mail (unlike IMAP sequence numbers or per-folder UIDs).
+# v2: ids switched from sequence numbers to X-GM-MSGID, so re-baseline once.
+BASELINE_FILE = "baseline_established_v2"
+SEARCH_BYTES = 30000  # partial fetch for search snippets; enough for the text part
+
+
+def _fetch(conn, uid, part="BODY.PEEK[]"):
+    """UID FETCH one message; returns (gmail_id, raw_bytes) or None."""
+    _, data = conn.uid("FETCH", uid, f"(X-GM-MSGID {part})")
+    item = next((d for d in data if isinstance(d, tuple)), None)
+
+    if item is None:
+        return None
+
+    gmail_id = re.search(rb"X-GM-MSGID (\d+)", item[0]).group(1).decode()
+    return gmail_id, item[1]
+
+
+def _uid_search(conn, *criteria):
+    _, data = conn.uid("SEARCH", *criteria)
+    return data[0].split() if data and data[0] else []
+
+
+def _select_all_mail(conn):
+    # The All Mail folder name is localized ("[Google Mail]/All Mail" etc.),
+    # so find it by its \All special-use flag.
+    _, folders = conn.list()
+
+    for line in folders:
+        if b"\\All" in line:
+            name = re.search(rb'"([^"]+)"$', line).group(1).decode()
+            conn.select(f'"{name}"', readonly=True)
+            return
+
+    raise RuntimeError("All Mail folder not found (enable it for IMAP in Gmail settings)")
 
 
 def get_new_emails():
     """
     Fetch and return recent INBOX emails (last 3 days), regardless of read
-    state. Caller dedups against already-delivered uids (state.py), so
+    state. Caller dedups against already-delivered ids (state.py), so
     reading an email in Gmail directly no longer hides it from summarization.
     On the very first call, the recent backlog is recorded as the baseline
     without being returned, so only mail arriving after that is summarized.
@@ -116,70 +151,97 @@ def get_new_emails():
 
     try:
         since = (datetime.now(timezone.utc) - timedelta(days=3)).strftime("%d-%b-%Y")
-        _, data = conn.search(None, "SINCE", since)
-        uids = data[0].split()
+        uids = _uid_search(conn, "SINCE", since)
 
-        first_run = not os.path.exists(BASELINE_FILE)
+        if not uids:
+            return []
 
-        if first_run:
-            for uid in uids:
-                mark_delivered(uid.decode())
+        _, data = conn.uid("FETCH", b",".join(uids), "(X-GM-MSGID)")
+        ids = {
+            re.search(rb"UID (\d+)", line).group(1): re.search(rb"X-GM-MSGID (\d+)", line).group(1).decode()
+            for line in data if isinstance(line, bytes) and b"X-GM-MSGID" in line
+        }
+
+        if not os.path.exists(BASELINE_FILE):
+            for gmail_id in ids.values():
+                mark_delivered(gmail_id)
             open(BASELINE_FILE, "w").close()
             return []
 
         emails = []
 
         for uid in uids:
-            if is_delivered(uid.decode()):
+            gmail_id = ids.get(uid)
+
+            if gmail_id is None or is_delivered(gmail_id):
                 continue
 
-            _, msg_data = conn.fetch(uid, "(BODY.PEEK[])")
-            raw_bytes = msg_data[0][1]
-            emails.append(_parse_message(uid.decode(), raw_bytes))
+            fetched = _fetch(conn, uid)
+
+            if fetched:
+                emails.append(_parse_message(*fetched))
 
         return emails
     finally:
         conn.logout()
 
 
-def get_email_by_uid(uid):
+def search_emails(query, max_results=10):
     """
-    Fetch and parse a single email by IMAP uid, without changing its seen state.
-    Returns None if the uid no longer exists in the mailbox.
+    Search All Mail with Gmail search syntax (e.g. 'from:john newer_than:7d').
+    Empty query = most recent mail. Returns newest-first metadata + a short
+    snippet; use get_email_by_id for the full body.
     """
 
     conn = _connect()
 
     try:
-        _, msg_data = conn.fetch(uid.encode(), "(BODY.PEEK[])")
+        _select_all_mail(conn)
 
-        if not msg_data or msg_data[0] is None:
+        if query.strip():
+            # Sent as an IMAP literal: no quoting/escaping, CRLF can't inject, UTF-8 ok.
+            conn.literal = query.encode("utf-8")
+            uids = _uid_search(conn, "CHARSET", "UTF-8", "X-GM-RAW")
+        else:
+            uids = _uid_search(conn, "ALL")
+
+        results = []
+
+        # ponytail: one FETCH per hit (max ~20 round trips); batch if it's slow.
+        for uid in reversed(uids[-max_results:]):
+            fetched = _fetch(conn, uid, f"BODY.PEEK[]<0.{SEARCH_BYTES}>")
+
+            if fetched:
+                email_data = _parse_message(*fetched)
+                email_data["snippet"] = " ".join(email_data.pop("body").split())[:300]
+                results.append(email_data)
+
+        return results
+    finally:
+        conn.logout()
+
+
+def get_email_by_id(gmail_id):
+    """
+    Fetch one email from All Mail by Gmail id, without changing its seen state.
+    Returns None if no such email exists.
+    """
+
+    gmail_id = str(gmail_id).strip()
+
+    if not (gmail_id.isascii() and gmail_id.isdigit()):
+        return None
+
+    conn = _connect()
+
+    try:
+        _select_all_mail(conn)
+        uids = _uid_search(conn, "X-GM-MSGID", gmail_id)
+
+        if not uids:
             return None
 
-        raw_bytes = msg_data[0][1]
-        return _parse_message(uid, raw_bytes)
-    finally:
-        conn.logout()
-
-
-def get_latest_emails(max_results=5):
-    """
-    Fetch the latest emails from Gmail (read or unread), most recent first.
-    """
-
-    conn = _connect()
-
-    try:
-        _, data = conn.search(None, "ALL")
-        uids = data[0].split()[-max_results:]
-
-        emails = []
-
-        for uid in reversed(uids):
-            _, msg_data = conn.fetch(uid, "(RFC822)")
-            raw_bytes = msg_data[0][1]
-            emails.append(_parse_message(uid.decode(), raw_bytes))
-
-        return emails
+        fetched = _fetch(conn, uids[0])
+        return _parse_message(*fetched) if fetched else None
     finally:
         conn.logout()

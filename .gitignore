@@ -6,6 +6,7 @@ __pycache__/
 venv/
 CLAUDE.md
 baseline_established
+baseline_established_v2
 graphify-out/.graphify_python
 graphify-out/.graphify_root
 graphify-out/cache/

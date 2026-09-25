@@ -15,4 +15,5 @@ RUN useradd --create-home appuser \
     && chown -R appuser:appuser /app /data
 USER appuser
 
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "server:app"]
+# --timeout: an agent turn (several Gemini + IMAP calls) can exceed the 30s default.
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--timeout", "120", "server:app"]

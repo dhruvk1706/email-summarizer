@@ -17,8 +17,9 @@ TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET")
 
 from flask import Flask, request
 
-from gmail import get_new_emails, get_email_by_uid
-from summarizer import summarize_email, classify_reply_command
+import agent
+from gmail import get_new_emails
+from summarizer import summarize_email
 from state import (
     is_delivered,
     mark_delivered,
@@ -54,43 +55,16 @@ def send_telegram_message(text, reply_to_message_id=None):
     return asyncio.run(send())
 
 
-def send_email_body(body, uid, reply_to_message_id):
-    if not body:
-        message_id = send_telegram_message("(empty body)", reply_to_message_id=reply_to_message_id)
-        record_sent_message(message_id, uid)
-        return
+def send_long_message(text, reply_to_message_id, email_id=None):
+    """Send text in Telegram-sized chunks; map each chunk to email_id so replies keep context."""
+    text = text or "(empty reply)"
 
-    for i in range(0, len(body), TELEGRAM_MAX_LEN):
+    for i in range(0, len(text), TELEGRAM_MAX_LEN):
         message_id = send_telegram_message(
-            body[i:i + TELEGRAM_MAX_LEN], reply_to_message_id=reply_to_message_id
+            text[i:i + TELEGRAM_MAX_LEN], reply_to_message_id=reply_to_message_id
         )
-        record_sent_message(message_id, uid)
-
-
-def handle_reply_command(text, uid, request_message_id):
-    command = text.lower() if text.lower() in ("full",) else classify_reply_command(text)
-
-    if command == "full":
-        email = get_email_by_uid(uid)
-
-        if email is None:
-            message_id = send_telegram_message(
-                "Could not find that email (it may have been deleted).",
-                reply_to_message_id=request_message_id,
-            )
-            record_sent_message(message_id, uid)
-            return
-
-        send_email_body(email["body"], uid, request_message_id)
-    # elif text.lower() == "details": ...
-    # elif text.lower() == "attachments": ...
-    # elif text.lower().startswith("ask:"): ...
-    # elif text.lower() == "reply": ...
-    else:
-        message_id = send_telegram_message(
-            f"Unknown command: {text}", reply_to_message_id=request_message_id
-        )
-        record_sent_message(message_id, uid)
+        if email_id:
+            record_sent_message(message_id, email_id)
 
 @app.route("/poll", methods=["POST"])
 def poll():
@@ -133,23 +107,29 @@ def telegram_webhook():
 
     update = request.get_json(silent=True) or {}
     message = update.get("message") or {}
+    chat_id = str((message.get("chat") or {}).get("id"))
     reply_to = message.get("reply_to_message")
     text = (message.get("text") or "").strip()
 
-    print(f"Webhook update: text={text!r} reply_to_message_id={(reply_to or {}).get('message_id')}")
-
-    if not reply_to or not text:
-        print("Webhook ignored: not a reply, or empty text.")
+    # The agent can read the whole mailbox: only the owner's chat may talk to it.
+    # Returns 200 so Telegram doesn't retry messages from strangers.
+    if not TELEGRAM_CHAT_ID or chat_id != str(TELEGRAM_CHAT_ID):
+        print("Webhook ignored: message from an unauthorized chat.")
         return "OK", 200
 
-    uid = get_uid_for_message(reply_to["message_id"])
-
-    if uid is None:
-        print(f"Webhook ignored: no uid mapping for message_id {reply_to['message_id']}.")
+    if not text:
         return "OK", 200
 
-    print(f"Webhook dispatch: uid={uid} command={text!r}")
-    handle_reply_command(text, uid, message["message_id"])
+    email_id = get_uid_for_message(reply_to["message_id"]) if reply_to else None
+    print(f"Webhook dispatch: email_id={email_id} len(text)={len(text)}")
+
+    try:
+        reply = agent.ask(text, thread_id=chat_id, email_id=email_id)
+    except Exception as e:
+        print(f"Agent error: {e!r}")
+        reply = "Sorry, something went wrong answering that. Please try again."
+
+    send_long_message(reply, message["message_id"], email_id)
     return "OK", 200
 
 

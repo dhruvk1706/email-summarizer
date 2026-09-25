@@ -34,6 +34,7 @@ TELEGRAM_CHAT_ID=your chat id number
 POLL_TOKEN=make up any random password here — it protects your endpoint from strangers
 GOOGLE_CLOUD_PROJECT=your google cloud project id
 GOOGLE_CLOUD_LOCATION=e.g. us-central1
+DATABASE_URL=postgresql://user:password@host:5432/dbname   (optional locally; stores chat memory)
 TELEGRAM_WEBHOOK_SECRET=make up another random password here — used to reply "full" (see below)
 ```
 
@@ -61,9 +62,19 @@ Every time you visit that link (or send a request to it), it checks your inbox f
 
 To confirm the server is alive at all, you can visit `http://localhost:8080/` — it should just say the service is running.
 
-## Getting the full email body
+## Chatting with your email
 
-Each summary is sent to you on Telegram as a reply-able message. Reply to any summary with the word `full` and the bot replies back with the complete original email body.
+You can message the bot in plain language and it answers from your Gmail (all mail, not just the inbox), remembering the conversation so follow-ups work:
+
+- "what did John ask me to do?" / "summarize all emails from John this month"
+- reply to a summary with "give me the complete email" or "when is the meeting?"
+- "what was the previous email about?" and then "and what's the deadline in it?"
+
+It only answers from emails it actually retrieved, and says so when it can't find something. It can only *read* mail (never send, delete, or change anything), and it only answers messages from your own `TELEGRAM_CHAT_ID`.
+
+Conversation memory is stored in Postgres via `DATABASE_URL` (any Postgres works: Cloud SQL, Supabase, Neon…). Without it, memory lives in the server process and is lost on restart. On Cloud Run, store it as a secret rather than a plain env var: `gcloud run services update email-assistant --set-secrets DATABASE_URL=<secret-name>:latest`.
+
+To try the chat locally in a terminal (real Gmail + Gemini, no Telegram): `python agent.py`.
 
 For this to work, Telegram needs to know where to send your replies — you register a "webhook" once, pointing at your server's public URL (this only works once your server is deployed somewhere reachable from the internet, e.g. Cloud Run, not `localhost`):
 
@@ -75,4 +86,4 @@ Use the same `TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` values from your
 
 ## Heads up: the first time you run it
 
-The very first time you hit `/poll`, it will **not** send you anything — it just marks your current unread emails as "seen" so you don't get flooded with your entire backlog. Only emails that arrive *after* that first check will get summarized and sent. If you want to reset this and re-trigger that first-run behavior, delete the file called `baseline_established` from this folder.
+The very first time you hit `/poll`, it will **not** send you anything — it just marks your current unread emails as "seen" so you don't get flooded with your entire backlog. Only emails that arrive *after* that first check will get summarized and sent. If you want to reset this and re-trigger that first-run behavior, delete the file called `baseline_established_v2` from this folder.
