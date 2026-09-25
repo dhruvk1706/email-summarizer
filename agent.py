@@ -1,4 +1,4 @@
-"""
+r"""
 Conversational email agent: LangGraph orchestration only.
 Gmail access lives in tools.py/gmail.py, the LLM + prompt in summarizer.py,
 Telegram I/O in server.py.
