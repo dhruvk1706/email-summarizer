@@ -72,6 +72,21 @@ You can message the bot in plain language and it answers from your Gmail (all ma
 
 It only answers from emails it actually retrieved, and says so when it can't find something. It can only *read* mail (never send, delete, or change anything), and it only answers messages from your own `TELEGRAM_CHAT_ID`.
 
+### Drafting an email
+
+Ask in plain language, for example: "draft an email to John saying I'll send it tomorrow".
+The agent uses the existing Vertex/Gemini client to compose a draft and returns a
+plain-text Telegram preview with To, Subject, and Body fields, clearly labeled
+"preview only - not sent". A recipient name is enough; it does not invent an
+email address. Reply to an email summary with "draft a reply saying I'll send it
+tomorrow" to use that email as context, or follow up with "make it more formal"
+to revise a preview. If the recipient or message is missing, the agent asks for it.
+
+Drafts are conversation previews only: they are not saved to Gmail, and no SMTP
+or email sending is supported. `/poll`, full-email previews, and mailbox questions
+continue to use the existing flow. Long previews use the existing Telegram
+message chunking.
+
 Conversation memory is stored in Postgres via `DATABASE_URL` (any Postgres works: Cloud SQL, Supabase, Neon…). Without it, memory lives in the server process and is lost on restart. On Cloud Run, store it as a secret rather than a plain env var: `gcloud run services update email-assistant --set-secrets DATABASE_URL=<secret-name>:latest`.
 
 To try the chat locally in a terminal (real Gmail + Gemini, no Telegram): `python agent.py`.

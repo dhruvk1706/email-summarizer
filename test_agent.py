@@ -1,12 +1,14 @@
 """Conversational-flow checks with a scripted fake model; no network. Run: python test_agent.py"""
 
 import itertools
+from unittest.mock import patch
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 
 import agent
 import gmail
+import tools
 
 EMAIL = {
     "id": "111", "from": "John <john@x.com>", "to": "me", "date": "Mon, 1 Sep 2026",
@@ -101,6 +103,56 @@ def test_history_window_cuts_at_user_turn():
         msgs += [HumanMessage(f"q{i}"), AIMessage(f"a{i}")]
     recent = agent._recent(msgs)
     assert isinstance(recent[0], HumanMessage) and len(recent) == agent.HISTORY_TURNS * 2
+
+
+def test_draft_preview_skips_agent_rewrite_and_keeps_history():
+    model = FakeModel(
+        call("draft_email", recipient="John", instructions="Say I'll send it tomorrow."),
+        AIMessage("It hasn't been sent."),
+    )
+    graph = new(model)
+    with patch.object(tools, "generate_email_draft", return_value={
+        "subject": "Sending it tomorrow", "body": "Hi John,\n\nI'll send it tomorrow.",
+    }) as generate, patch.object(gmail, "search_emails") as search:
+        reply = agent.ask("draft an email to John saying I'll send it tomorrow", "draft1", graph=graph)
+    assert reply == (
+        "Email draft (preview only - not sent)\n\nTo: John\nSubject: Sending it tomorrow\n\n"
+        "Body:\nHi John,\n\nI'll send it tomorrow.\n\nNot sent or saved to Gmail."
+    )
+    assert len(model.prompts) == 1
+    generate.assert_called_once_with("John", "Say I'll send it tomorrow.", "")
+    search.assert_not_called()
+    assert agent.ask("did you send it?", "draft1", graph=graph) == "It hasn't been sent."
+    assert any(isinstance(m, AIMessage) and m.content == reply for m in model.prompts[-1])
+
+
+def test_draft_reply_and_revision_pass_context():
+    model = FakeModel(
+        call("get_email", email_id="111"),
+        call("draft_email", recipient=EMAIL["from"], instructions="Say I'll send it tomorrow.", context=EMAIL["body"]),
+        call("draft_email", recipient=EMAIL["from"], instructions="Make it more formal.", context="I'll send it tomorrow."),
+    )
+    graph = new(model)
+    with patch.object(tools, "generate_email_draft", return_value={
+        "subject": "Re: Report", "body": "I'll send it tomorrow.",
+    }) as generate:
+        agent.ask("draft a reply saying I'll send it tomorrow", "draft2", email_id="111", graph=graph)
+        agent.ask("make it more formal", "draft2", graph=graph)
+    assert generate.call_args_list[0].args == (EMAIL["from"], "Say I'll send it tomorrow.", EMAIL["body"])
+    assert generate.call_args_list[1].args == (EMAIL["from"], "Make it more formal.", "I'll send it tomorrow.")
+    assert "replying about email id 111" in model.prompts[0][-1].content
+    assert any(isinstance(m, ToolMessage) and m.name == "draft_email" for m in model.prompts[-1])
+
+
+def test_draft_generation_failure_returns_to_agent():
+    model = FakeModel(
+        call("draft_email", recipient="John", instructions="Say hello."),
+        AIMessage("I couldn't generate the draft. Please try again."),
+    )
+    with patch.object(tools, "generate_email_draft", side_effect=ValueError("Incomplete draft")):
+        reply = agent.ask("draft an email to John saying hello", "draft3", graph=new(model))
+    assert reply == "I couldn't generate the draft. Please try again."
+    assert len(model.prompts) == 2 and model.prompts[-1][-1].status == "error"
 
 
 if __name__ == "__main__":
