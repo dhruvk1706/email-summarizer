@@ -1,8 +1,9 @@
-"""Read-only Gmail tools for the agent. Nothing here sends, deletes, or modifies mail."""
+"""Read-only Gmail and draft-preview tools. Nothing here sends or modifies mail."""
 
 from langchain_core.tools import tool
 
 import gmail
+from summarizer import generate_email_draft
 
 MAX_BODY_CHARS = 30000
 
@@ -55,4 +56,23 @@ def show_full_email(email_id: str) -> str:
     return f"From: {e['from']}\nDate: {e['date']}\nSubject: {e['subject']}\n\n{e['body'] or '(empty body)'}"
 
 
-TOOLS = [search_emails, get_email, show_full_email]
+@tool
+def draft_email(recipient: str, instructions: str, context: str = "") -> str:
+    """Compose an email draft preview, never send or save it. Recipient can be a
+    name or an address supplied by the user. Instructions describe what to say
+    and the desired tone. Optional context is retrieved email text or a previous
+    draft for replies/revisions. The formatted result is shown to the user as-is."""
+    recipient = " ".join(recipient.split())
+    instructions = instructions.strip()
+    if not recipient or not instructions:
+        raise ValueError("Drafting needs a recipient and instructions describing what to say.")
+    draft = generate_email_draft(recipient, instructions, context)
+    return (
+        f"Email draft (preview only - not sent)\n\n"
+        f"To: {recipient}\nSubject: {draft['subject']}\n\n"
+        f"Body:\n{draft['body']}\n\n"
+        "Not sent or saved to Gmail."
+    )
+
+
+TOOLS = [search_emails, get_email, show_full_email, draft_email]

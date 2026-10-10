@@ -5,6 +5,7 @@ Telegram I/O in server.py.
 
 Graph:  START -> agent -(tool calls?)-> tools -> agent ... -> END
                                            \-(show_full_email)-> show_full -> END
+                                           \-(draft_email)-> show_draft -> END
 
 Usage (local chat against real Gmail + Gemini): python agent.py
 """
@@ -61,6 +62,8 @@ def build_graph(model, checkpointer):
 
     def after_tools(state):
         batch = _last_tool_batch(state["messages"])
+        if any(m.name == "draft_email" and m.status == "success" for m in batch):
+            return "show_draft"
         return "show_full" if any(m.name == "show_full_email" for m in batch) else "agent"
 
     def show_full(state):
@@ -68,14 +71,24 @@ def build_graph(model, checkpointer):
         batch = _last_tool_batch(state["messages"])
         return {"messages": [AIMessage("\n\n".join(m.content for m in batch if m.name == "show_full_email"))]}
 
+    def show_draft(state):
+        # Keep the formatted preview intact instead of asking the agent to retype it.
+        batch = _last_tool_batch(state["messages"])
+        return {"messages": [AIMessage("\n\n".join(
+            m.content for m in batch
+            if m.name in {"draft_email", "show_full_email"} and m.status == "success"
+        ))]}
+
     graph = StateGraph(MessagesState)
     graph.add_node("agent", agent)
     graph.add_node("tools", ToolNode(TOOLS, handle_tool_errors=True))
     graph.add_node("show_full", show_full)
+    graph.add_node("show_draft", show_draft)
     graph.add_edge(START, "agent")
     graph.add_conditional_edges("agent", tools_condition, {"tools": "tools", END: END})
-    graph.add_conditional_edges("tools", after_tools, ["agent", "show_full"])
+    graph.add_conditional_edges("tools", after_tools, ["agent", "show_full", "show_draft"])
     graph.add_edge("show_full", END)
+    graph.add_edge("show_draft", END)
     return graph.compile(checkpointer=checkpointer)
 
 
