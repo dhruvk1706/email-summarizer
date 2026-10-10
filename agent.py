@@ -10,8 +10,9 @@ Usage (local chat against real Gmail + Gemini): python agent.py
 """
 
 import os
+import time
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, SystemMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, START, MessagesState, StateGraph
@@ -22,6 +23,7 @@ from tools import TOOLS
 
 HISTORY_TURNS = 20
 RECURSION_LIMIT = 12
+MAX_AGE = 2 * 24 * 3600  # seconds a message lives in memory
 GAVE_UP = "Sorry, I couldn't complete that. Could you ask more specifically?"
 
 
@@ -30,6 +32,15 @@ def _recent(messages):
     # tool call/result pairs stay intact); summarize older history if that's too short.
     starts = [i for i, m in enumerate(messages) if isinstance(m, HumanMessage)]
     return messages[starts[-HISTORY_TURNS]:] if len(starts) > HISTORY_TURNS else messages
+
+
+def _expired(messages, now):
+    # Everything before the first user turn posted within MAX_AGE (cut at a user message so
+    # tool call/result pairs stay intact). Turns without a ts (pre-expiry history) count as old.
+    for i, m in enumerate(messages):
+        if isinstance(m, HumanMessage) and now - m.additional_kwargs.get("ts", 0) < MAX_AGE:
+            return messages[:i]
+    return messages
 
 
 def _last_tool_batch(messages):
@@ -105,11 +116,16 @@ def ask(text, thread_id, email_id=None, graph=None):
     graph = graph or _get_graph()
     config = {"configurable": {"thread_id": str(thread_id)}, "recursion_limit": RECURSION_LIMIT}
 
+    # ponytail: lazy purge on the next message, no cron; an unused chat's rows linger in the DB.
+    old = _expired(graph.get_state(config).values.get("messages", []), time.time())
+    if old:
+        graph.update_state(config, {"messages": [RemoveMessage(id=m.id) for m in old]}, as_node="show_full")
+
     if email_id:
         text = f"[User is replying about email id {email_id}]\n{text}"
 
     try:
-        result = graph.invoke({"messages": [HumanMessage(text)]}, config)
+        result = graph.invoke({"messages": [HumanMessage(text, additional_kwargs={"ts": time.time()})]}, config)
     except GraphRecursionError:
         # Close out any dangling tool calls so the saved history stays valid next turn.
         last = graph.get_state(config).values["messages"][-1]

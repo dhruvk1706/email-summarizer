@@ -103,6 +103,21 @@ def test_history_window_cuts_at_user_turn():
     assert isinstance(recent[0], HumanMessage) and len(recent) == agent.HISTORY_TURNS * 2
 
 
+def test_messages_expire_after_two_days():
+    graph = new(FakeModel(AIMessage("one"), AIMessage("two"), AIMessage("three")))
+    cfg = {"configurable": {"thread_id": "t7"}}
+    agent.ask("old question", "t7", graph=graph)
+    # age the first turn by 3 days
+    first = graph.get_state(cfg).values["messages"][0]
+    first.additional_kwargs["ts"] -= 3 * 24 * 3600
+    graph.update_state(cfg, {"messages": [first]}, as_node="show_full")
+    agent.ask("fresh question", "t7", graph=graph)
+    texts = [m.content for m in graph.get_state(cfg).values["messages"]]
+    assert texts == ["fresh question", "two"], texts
+    agent.ask("another", "t7", graph=graph)
+    assert len(graph.get_state(cfg).values["messages"]) == 4  # recent turns are kept
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
