@@ -18,7 +18,11 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - run: |
+      # summarizer.py builds the Vertex client at import; a project skips the credential lookup.
+      - env:
+          GOOGLE_CLOUD_PROJECT: ci
+          GOOGLE_CLOUD_LOCATION: us-central1
+        run: |
           python test_agent.py
           python test_webhook.py
           python test_extract_body.py
