@@ -1,8 +1,11 @@
 """Read-only Gmail and draft-preview tools. Nothing here sends or modifies mail."""
 
+import os
+
 from langchain_core.tools import tool
 
 import gmail
+import rag
 from summarizer import generate_email_draft
 
 MAX_BODY_CHARS = 30000
@@ -12,13 +15,7 @@ def _header(e):
     return f"id: {e['id']}\nFrom: {e['from']}\nTo: {e['to']}\nDate: {e['date']}\nSubject: {e['subject']}"
 
 
-@tool
-def search_emails(query: str, max_results: int = 10) -> str:
-    """Search the user's mailbox (all mail, newest first) with Gmail search syntax,
-    e.g. 'from:john newer_than:30d' or 'subject:invoice'. Empty query = latest emails.
-    Returns ids, headers and short snippets; use get_email for full details."""
-    results = gmail.search_emails(query, max(1, min(max_results, 20)))
-
+def _format_results(results, query):
     if not results:
         return f"No emails found for query: {query!r}"
 
@@ -26,6 +23,23 @@ def search_emails(query: str, max_results: int = 10) -> str:
         f"{_header(e)}\nPreview (first 300 chars only, cut off; call get_email for the real content): {e['snippet']}"
         for e in results
     )
+
+
+@tool
+def search_emails(query: str, max_results: int = 10) -> str:
+    """Search the user's mailbox (all mail, newest first) with Gmail search syntax,
+    e.g. 'from:john newer_than:30d' or 'subject:invoice'. Empty query = latest emails.
+    Returns ids, headers and short snippets; use get_email for full details."""
+    return _format_results(gmail.search_emails(query, max(1, min(max_results, 20))), query)
+
+
+@tool
+def semantic_search(query: str, max_results: int = 10) -> str:
+    """Search indexed mail by meaning, not keywords, e.g. 'someone asking me to approve
+    a budget' or 'travel plans for next month'. Plain language, not Gmail syntax.
+    Returns ids, headers and short snippets of the best-matching emails; use get_email
+    for full details."""
+    return _format_results(rag.semantic_search(query, max(1, min(max_results, 20))), query)
 
 
 @tool
@@ -76,3 +90,7 @@ def draft_email(recipient: str, instructions: str, context: str = "") -> str:
 
 
 TOOLS = [search_emails, get_email, show_full_email, draft_email]
+
+# The index lives in Postgres; without DATABASE_URL there is nothing to search.
+if os.getenv("DATABASE_URL"):
+    TOOLS.append(semantic_search)

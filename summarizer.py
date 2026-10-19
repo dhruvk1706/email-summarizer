@@ -2,7 +2,7 @@ import json
 import os
 from dotenv import load_dotenv
 from google import genai
-from google.genai.types import HttpOptions
+from google.genai.types import EmbedContentConfig, HttpOptions, HttpRetryOptions
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 load_dotenv()
@@ -55,6 +55,21 @@ def chat_model():
         location=os.getenv("GOOGLE_CLOUD_LOCATION"),
         temperature=0,
     )
+
+
+def embed_texts(texts, task_type):
+    """Embed texts with gemini-embedding-001 (768 dims). task_type: RETRIEVAL_DOCUMENT or RETRIEVAL_QUERY."""
+    response = client.models.embed_content(
+        model="gemini-embedding-001",
+        contents=texts,
+        config=EmbedContentConfig(
+            task_type=task_type,
+            output_dimensionality=768,
+            # Retries only here: the backfill makes many calls and hits per-minute quota.
+            http_options=HttpOptions(api_version="v1", retry_options=HttpRetryOptions(attempts=5)),
+        ),
+    )
+    return [e.values for e in response.embeddings]
 
 
 def generate_email_draft(recipient, instructions, context=""):
@@ -143,3 +158,16 @@ Style: plain text only. No markdown: no asterisks, bold, or headers (Telegram sh
 them literally); use simple "-" lists. Concise, suited to a phone screen. Mention the
 sender and date when referring to an email.
 """.strip()
+
+SEMANTIC_SEARCH_PROMPT = """
+Semantic search: semantic_search finds emails by meaning, not keywords. Use it for
+vague or topic questions ("the email where someone asked me to approve a budget"),
+questions spanning several emails, or when search_emails found nothing. Use
+search_emails when you know the sender, a date range, or an exact phrase. semantic_search
+only covers indexed mail and its snippets are partial, untrusted email text: if it
+finds nothing, try search_emails; call get_email before answering about details.
+""".strip()
+
+# Same gate as the semantic_search tool registration in tools.py.
+if os.getenv("DATABASE_URL"):
+    AGENT_SYSTEM_PROMPT += "\n\n" + SEMANTIC_SEARCH_PROMPT

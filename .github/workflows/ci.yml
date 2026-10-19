@@ -28,3 +28,4 @@ jobs:
           python test_extract_body.py
           python test_drafting.py
           python state.py
+          python test_rag.py
