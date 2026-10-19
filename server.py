@@ -18,6 +18,7 @@ TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET")
 from flask import Flask, request
 
 import agent
+import rag
 from gmail import get_new_emails
 from summarizer import summarize_email
 from state import (
@@ -94,6 +95,14 @@ def poll():
 
             except Exception as e:
                 print(f"Could not process email {email['id']}: {e}")
+                continue
+
+            # Separate try: indexing must never block or undo delivery.
+            if os.getenv("DATABASE_URL"):
+                try:
+                    rag.index_emails([email])
+                except Exception as e:
+                    print(f"Could not index email {email['id']}: {e!r}")
 
         return "OK", 200
     finally:

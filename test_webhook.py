@@ -72,12 +72,30 @@ def test_poll_still_summarizes_and_records_new_mail():
          patch.object(server, "is_delivered", return_value=False), \
          patch.object(server, "summarize_email", return_value="Email summary") as summarize, \
          patch.object(server, "mark_delivered") as delivered, \
-         patch.object(server.agent, "ask") as ask:
+         patch.object(server.agent, "ask") as ask, \
+         patch.dict(server.os.environ, {"DATABASE_URL": "postgresql://unused"}), \
+         patch.object(server.rag, "index_emails") as index:
         assert client.post("/poll?token=poll-secret").status_code == 200
     summarize.assert_called_once_with(email)
     delivered.assert_called_once_with("222")
+    index.assert_called_once_with([email])
     ask.assert_not_called()
     assert sent == ["Email summary"] and recorded == [(1, "222")]
+
+
+def test_poll_indexing_failure_never_breaks_delivery():
+    emails = [{"id": "333", "subject": "A", "body": "a"}, {"id": "444", "subject": "B", "body": "b"}]
+    sent.clear()
+    with patch.object(server, "POLL_TOKEN", "poll-secret"), \
+         patch.object(server, "get_new_emails", return_value=emails), \
+         patch.object(server, "is_delivered", return_value=False), \
+         patch.object(server, "summarize_email", side_effect=lambda e: f"summary {e['id']}"), \
+         patch.object(server, "mark_delivered") as delivered, \
+         patch.dict(server.os.environ, {"DATABASE_URL": "postgresql://unused"}), \
+         patch.object(server.rag, "index_emails", side_effect=RuntimeError("db down")):
+        assert client.post("/poll?token=poll-secret").status_code == 200
+    assert sent == ["summary 333", "summary 444"]
+    assert [c.args for c in delivered.call_args_list] == [("333",), ("444",)]
 
 
 def test_long_answer_is_chunked():

@@ -124,6 +124,20 @@ def _uid_search(conn, *criteria):
     return data[0].split() if data and data[0] else []
 
 
+def _gmail_ids(conn, uids, batch=500):
+    """{uid: gmail_id} for the given UIDs, fetched in batches to keep commands short."""
+    ids = {}
+
+    for i in range(0, len(uids), batch):
+        _, data = conn.uid("FETCH", b",".join(uids[i:i + batch]), "(X-GM-MSGID)")
+        ids.update(
+            (re.search(rb"UID (\d+)", line).group(1), re.search(rb"X-GM-MSGID (\d+)", line).group(1).decode())
+            for line in data if isinstance(line, bytes) and b"X-GM-MSGID" in line
+        )
+
+    return ids
+
+
 def _select_all_mail(conn):
     # The All Mail folder name is localized ("[Google Mail]/All Mail" etc.),
     # so find it by its \All special-use flag.
@@ -156,11 +170,7 @@ def get_new_emails():
         if not uids:
             return []
 
-        _, data = conn.uid("FETCH", b",".join(uids), "(X-GM-MSGID)")
-        ids = {
-            re.search(rb"UID (\d+)", line).group(1): re.search(rb"X-GM-MSGID (\d+)", line).group(1).decode()
-            for line in data if isinstance(line, bytes) and b"X-GM-MSGID" in line
-        }
+        ids = _gmail_ids(conn, uids)
 
         if not os.path.exists(BASELINE_FILE):
             for gmail_id in ids.values():
@@ -217,6 +227,38 @@ def search_emails(query, max_results=10):
                 results.append(email_data)
 
         return results
+    finally:
+        conn.logout()
+
+
+# ponytail: partial fetch keeps attachments out and spares Gmail's IMAP download quota;
+# text past the first 200KB of the raw message is not indexed.
+INDEX_BYTES = 200000
+
+
+def iter_all_mail_since(since, skip=lambda gmail_id: False):
+    """
+    Yield parsed All Mail emails received since `since` (a date), newest first,
+    over one connection. Ids where skip(gmail_id) is true are not fetched.
+    """
+
+    conn = _connect()
+
+    try:
+        _select_all_mail(conn)
+        uids = _uid_search(conn, "SINCE", since.strftime("%d-%b-%Y"))
+        ids = _gmail_ids(conn, uids)
+
+        for uid in reversed(uids):
+            gmail_id = ids.get(uid)
+
+            if gmail_id is None or skip(gmail_id):
+                continue
+
+            fetched = _fetch(conn, uid, f"BODY.PEEK[]<0.{INDEX_BYTES}>")
+
+            if fetched:
+                yield _parse_message(*fetched)
     finally:
         conn.logout()
 
